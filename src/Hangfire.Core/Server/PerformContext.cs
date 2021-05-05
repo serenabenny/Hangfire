@@ -16,80 +16,115 @@
 
 using System;
 using System.Collections.Generic;
+using Hangfire.Annotations;
 using Hangfire.Common;
+using Hangfire.Profiling;
 using Hangfire.Storage;
 
 namespace Hangfire.Server
 {
     /// <summary>
     /// Provides information about the context in which the job
-    /// is being performed.
+    /// is performed.
     /// </summary>
-    public class PerformContext : WorkerContext
+    public class PerformContext
     {
-        internal PerformContext(PerformContext context)
-            : this(context, context.Connection, context.JobId, context.Job, context.CreatedAt, context.CancellationToken)
+        public PerformContext([NotNull] PerformContext context)
+            : this(context.Storage, context.Connection, context.BackgroundJob, context.CancellationToken, context.Profiler)
         {
             Items = context.Items;
         }
 
-        internal PerformContext(
-            WorkerContext workerContext,
-            IStorageConnection connection,
-            string jobId,
-            Job job,
-            DateTime createdAt,
-            IJobCancellationToken cancellationToken)
-            : base(workerContext)
+        [Obsolete("Please use PerformContext(JobStorage, IStorageConnection, BackgroundJob, IJobCancellationToken) overload instead. Will be removed in 2.0.0.")]
+        public PerformContext(
+            [NotNull] IStorageConnection connection,
+            [NotNull] BackgroundJob backgroundJob,
+            [NotNull] IJobCancellationToken cancellationToken)
+            : this(null, connection, backgroundJob, cancellationToken)
         {
-            if (connection == null) throw new ArgumentNullException("connection");
-            if (jobId == null) throw new ArgumentNullException("jobId");
-            if (job == null) throw new ArgumentNullException("job");
-            if (cancellationToken == null) throw new ArgumentNullException("cancellationToken");
+        }
 
+        public PerformContext(
+            [CanBeNull] JobStorage storage,
+            [NotNull] IStorageConnection connection, 
+            [NotNull] BackgroundJob backgroundJob,
+            [NotNull] IJobCancellationToken cancellationToken)
+            : this(storage, connection, backgroundJob, cancellationToken, EmptyProfiler.Instance)
+        {
+        }
+
+        internal PerformContext(
+            [CanBeNull] JobStorage storage,
+            [NotNull] IStorageConnection connection, 
+            [NotNull] BackgroundJob backgroundJob,
+            [NotNull] IJobCancellationToken cancellationToken,
+            [NotNull] IProfiler profiler)
+        {
+            if (connection == null) throw new ArgumentNullException(nameof(connection));
+            if (backgroundJob == null) throw new ArgumentNullException(nameof(backgroundJob));
+            if (cancellationToken == null) throw new ArgumentNullException(nameof(cancellationToken));
+            if (profiler == null) throw new ArgumentNullException(nameof(profiler));
+
+            Storage = storage;
             Connection = connection;
-            JobId = jobId;
-            Job = job;
-            CreatedAt = createdAt;
+            BackgroundJob = backgroundJob;
             CancellationToken = cancellationToken;
+            Profiler = profiler;
 
             Items = new Dictionary<string, object>();
         }
+
+        [CanBeNull]
+        public JobStorage Storage { get; }
 
         /// <summary>
         /// Gets an instance of the key-value storage. You can use it
         /// to pass additional information between different client filters
         /// or just between different methods.
         /// </summary>
-        public IDictionary<string, object> Items { get; private set; }
+        [NotNull]
+        public IDictionary<string, object> Items { get; }
 
-        public string JobId { get; private set; }
-        public Job Job { get; private set; }
-        public DateTime CreatedAt { get; private set; }
+        [NotNull]
+        public BackgroundJob BackgroundJob { get; }
 
-        public IJobCancellationToken CancellationToken { get; private set; }
-        public IStorageConnection Connection { get; private set; }
+        [Obsolete("Please use BackgroundJob property instead. Will be removed in 2.0.0.")]
+        public string JobId => BackgroundJob.Id;
+
+        [Obsolete("Please use BackgroundJob property instead. Will be removed in 2.0.0.")]
+        public Job Job => BackgroundJob.Job;
+
+        [Obsolete("Please use BackgroundJob property instead. Will be removed in 2.0.0.")]
+        public DateTime CreatedAt => BackgroundJob.CreatedAt;
+
+        [NotNull]
+        public IJobCancellationToken CancellationToken { get; }
+
+        [NotNull]
+        public IStorageConnection Connection { get; }
+        
+        [NotNull]
+        internal IProfiler Profiler { get; }
 
         public void SetJobParameter(string name, object value)
         {
-            if (String.IsNullOrEmpty(name)) throw new ArgumentNullException("name");
+            if (String.IsNullOrEmpty(name)) throw new ArgumentNullException(nameof(name));
 
-            Connection.SetJobParameter(JobId, name, JobHelper.ToJson(value));
+            Connection.SetJobParameter(BackgroundJob.Id, name, SerializationHelper.Serialize(value, SerializationOption.User));
         }
 
         public T GetJobParameter<T>(string name)
         {
-            if (String.IsNullOrEmpty(name)) throw new ArgumentNullException("name");
+            if (String.IsNullOrEmpty(name)) throw new ArgumentNullException(nameof(name));
 
             try
             {
-                return JobHelper.FromJson<T>(Connection.GetJobParameter(JobId, name));
+                return SerializationHelper.Deserialize<T>(Connection.GetJobParameter(BackgroundJob.Id, name), SerializationOption.User);
             }
             catch (Exception ex)
             {
-                throw new InvalidOperationException(String.Format(
-                    "Could not get a value of the job parameter `{0}`. See inner exception for details.",
-                    name), ex);
+                throw new InvalidOperationException(
+                    $"Could not get a value of the job parameter `{name}`. See inner exception for details.", ex);
             }
         }
     }

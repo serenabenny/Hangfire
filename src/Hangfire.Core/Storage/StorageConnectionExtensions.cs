@@ -16,7 +16,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Runtime.CompilerServices;
 using Hangfire.Annotations;
 using Hangfire.Common;
 
@@ -29,17 +28,17 @@ namespace Hangfire.Storage
             [NotNull] string jobId, 
             TimeSpan timeout)
         {
-            if (connection == null) throw new ArgumentNullException("connection");
-            if (jobId == null) throw new ArgumentNullException("jobId");
+            if (connection == null) throw new ArgumentNullException(nameof(connection));
+            if (jobId == null) throw new ArgumentNullException(nameof(jobId));
 
             return connection.AcquireDistributedLock(
-                String.Format("job:{0}:state-lock", jobId),
+                $"job:{jobId}:state-lock",
                 timeout);
         }
 
         public static long GetRecurringJobCount([NotNull] this JobStorageConnection connection)
         {
-            if (connection == null) throw new ArgumentNullException("connection");
+            if (connection == null) throw new ArgumentNullException(nameof(connection));
             return connection.GetSetCount("recurring-jobs");
         }
 
@@ -48,7 +47,7 @@ namespace Hangfire.Storage
             int startingFrom,
             int endingAt)
         {
-            if (connection == null) throw new ArgumentNullException("connection");
+            if (connection == null) throw new ArgumentNullException(nameof(connection));
 
             var ids = connection.GetRangeFromSet("recurring-jobs", startingFrom, endingAt);
             return GetRecurringJobDtos(connection, ids);
@@ -56,9 +55,15 @@ namespace Hangfire.Storage
 
         public static List<RecurringJobDto> GetRecurringJobs([NotNull] this IStorageConnection connection)
         {
-            if (connection == null) throw new ArgumentNullException("connection");
+            if (connection == null) throw new ArgumentNullException(nameof(connection));
 
             var ids = connection.GetAllItemsFromSet("recurring-jobs");
+            return GetRecurringJobDtos(connection, ids);
+        }
+
+        public static List<RecurringJobDto> GetRecurringJobs([NotNull] this IStorageConnection connection, IEnumerable<string> ids)
+        {
+            if (connection == null) throw new ArgumentNullException(nameof(connection));
             return GetRecurringJobDtos(connection, ids);
         }
 
@@ -67,21 +72,28 @@ namespace Hangfire.Storage
             var result = new List<RecurringJobDto>();
             foreach (var id in ids)
             {
-                var hash = connection.GetAllEntriesFromHash(String.Format("recurring-job:{0}", id));
+                var hash = connection.GetAllEntriesFromHash($"recurring-job:{id}");
 
+                // TODO: Remove this in 2.0 (breaking change)
                 if (hash == null)
                 {
                     result.Add(new RecurringJobDto { Id = id, Removed = true });
                     continue;
                 }
 
-                var dto = new RecurringJobDto { Id = id };
-                dto.Cron = hash["Cron"];
+                var dto = new RecurringJobDto
+                {
+                    Id = id,
+                    Cron = hash["Cron"]
+                };
 
                 try
                 {
-                    var invocationData = JobHelper.FromJson<InvocationData>(hash["Job"]);
-                    dto.Job = invocationData.Deserialize();
+                    if (hash.TryGetValue("Job", out var payload) && !String.IsNullOrWhiteSpace(payload))
+                    {
+                        var invocationData = InvocationData.DeserializePayload(payload);
+                        dto.Job = invocationData.DeserializeJob();
+                    }
                 }
                 catch (JobLoadException ex)
                 {
@@ -90,7 +102,7 @@ namespace Hangfire.Storage
 
                 if (hash.ContainsKey("NextExecution"))
                 {
-                    dto.NextExecution = JobHelper.DeserializeDateTime(hash["NextExecution"]);
+                    dto.NextExecution = JobHelper.DeserializeNullableDateTime(hash["NextExecution"]);
                 }
 
                 if (hash.ContainsKey("LastJobId") && !string.IsNullOrWhiteSpace(hash["LastJobId"]))
@@ -103,10 +115,15 @@ namespace Hangfire.Storage
                         dto.LastJobState = stateData.Name;
                     }
                 }
+                
+                if (hash.ContainsKey("Queue"))
+                {
+                    dto.Queue = hash["Queue"];
+                }
 
                 if (hash.ContainsKey("LastExecution"))
                 {
-                    dto.LastExecution = JobHelper.DeserializeDateTime(hash["LastExecution"]);
+                    dto.LastExecution = JobHelper.DeserializeNullableDateTime(hash["LastExecution"]);
                 }
 
                 if (hash.ContainsKey("TimeZoneId"))
@@ -114,9 +131,29 @@ namespace Hangfire.Storage
                     dto.TimeZoneId = hash["TimeZoneId"];
                 }
 
+                if (hash.ContainsKey("CreatedAt"))
+                {
+                    dto.CreatedAt = JobHelper.DeserializeNullableDateTime(hash["CreatedAt"]);
+                }
+
+                if (hash.TryGetValue("Error", out var error) && !String.IsNullOrEmpty(error))
+                {
+                    dto.Error = error;
+                }
+
+                if (hash.TryGetValue("RetryAttempt", out var attemptString) &&
+                    Int32.TryParse(attemptString, out var retryAttempt))
+                {
+                    dto.RetryAttempt = retryAttempt;
+                }
+                else
+                {
+                    dto.RetryAttempt = 0;
+                }
+
                 result.Add(dto);
             }
-
+            
             return result;
         }
     }

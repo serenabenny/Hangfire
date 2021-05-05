@@ -15,8 +15,8 @@
 // License along with Hangfire. If not, see <http://www.gnu.org/licenses/>.
 
 using System.Reflection;
+using System.Threading.Tasks;
 using Hangfire.Annotations;
-using Microsoft.Owin;
 
 namespace Hangfire.Dashboard
 {
@@ -37,14 +37,14 @@ namespace Hangfire.Dashboard
             _resourceNames = resourceNames;
         }
 
-        protected override void WriteResponse(IOwinResponse response)
+        protected override async Task WriteResponse(DashboardResponse response)
         {
             foreach (var resourceName in _resourceNames)
             {
-                WriteResource(
+                await WriteResource(
                     response,
                     _assembly,
-                    string.Format("{0}.{1}", _baseNamespace, resourceName));
+                    $"{_baseNamespace}.{resourceName}").ConfigureAwait(false);
             }
         }
     }

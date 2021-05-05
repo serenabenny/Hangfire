@@ -22,6 +22,8 @@ using Owin;
 
 namespace Hangfire
 {
+    /// <exclude />
+    [Obsolete("Please use `GlobalConfiguration` class for configuration, or `IAppBuilder.UseHangfireDashboard` and `IAppBuilder.UseHangfireServer` OWIN extension methods instead. Will be removed in version 2.0.0.")]
     public static class OwinBootstrapper
     {
         /// <summary>
@@ -36,8 +38,8 @@ namespace Hangfire
             [NotNull] this IAppBuilder app,
             [NotNull] Action<IBootstrapperConfiguration> configurationAction)
         {
-            if (app == null) throw new ArgumentNullException("app");
-            if (configurationAction == null) throw new ArgumentNullException("configurationAction");
+            if (app == null) throw new ArgumentNullException(nameof(app));
+            if (configurationAction == null) throw new ArgumentNullException(nameof(configurationAction));
 
             var configuration = new BootstrapperConfiguration();
             configurationAction(configuration);

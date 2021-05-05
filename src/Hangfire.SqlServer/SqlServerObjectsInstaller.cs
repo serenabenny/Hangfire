@@ -15,68 +15,52 @@
 // License along with Hangfire. If not, see <http://www.gnu.org/licenses/>.
 
 using System;
-using System.Data.SqlClient;
-using System.Diagnostics.CodeAnalysis;
+using System.Data.Common;
 using System.IO;
-using System.Linq;
 using System.Reflection;
 using Dapper;
 using Hangfire.Logging;
 
 namespace Hangfire.SqlServer
 {
-    [ExcludeFromCodeCoverage]
-    internal static class SqlServerObjectsInstaller
+    public static class SqlServerObjectsInstaller
     {
-        private const int RequiredSchemaVersion = 4;
-        private const int RetryAttempts = 3;
+        [Obsolete("This field is unused and will be removed in 2.0.0.")]
+        public static readonly int RequiredSchemaVersion = 5;
 
-        private static readonly ILog Log = LogProvider.GetLogger(typeof(SqlServerStorage));
-
-        public static void Install(SqlConnection connection)
+        public static void Install(DbConnection connection)
         {
-            if (connection == null) throw new ArgumentNullException("connection");
-
-            Log.Info("Start installing Hangfire SQL objects...");
-
-            if (!IsSqlEditionSupported(connection))
-            {
-                throw new PlatformNotSupportedException("The SQL Server edition of the target server is unsupported, e.g. SQL Azure.");
-            }
-
-            var script = GetStringResource(
-                typeof(SqlServerObjectsInstaller).Assembly, 
-                "Hangfire.SqlServer.Install.sql");
-
-            script = script.Replace("SET @TARGET_SCHEMA_VERSION = 4;", "SET @TARGET_SCHEMA_VERSION = " + RequiredSchemaVersion + ";");
-
-            for (var i = 0; i < RetryAttempts; i++)
-            {
-                try
-                {
-                    connection.Execute(script);
-                    break;
-                }
-                catch (SqlException ex)
-                {
-                    if (ex.ErrorCode == 1205)
-                    {
-                        Log.WarnException("Deadlock occurred during automatic migration execution. Retrying...", ex);
-                    }
-                    else
-                    {
-                        throw;
-                    }
-                }
-            }
-
-            Log.Info("Hangfire SQL objects installed.");
+            Install(connection, null);
         }
 
-        private static bool IsSqlEditionSupported(SqlConnection connection)
+        public static void Install(DbConnection connection, string schema)
         {
-            var edition = connection.Query<int>("SELECT SERVERPROPERTY ( 'EngineEdition' )").Single();
-            return edition >= SqlEngineEdition.Standard && edition <= SqlEngineEdition.SqlAzure;
+            Install(connection, schema, false);
+        }
+
+        public static void Install(DbConnection connection, string schema, bool enableHeavyMigrations)
+        {
+            if (connection == null) throw new ArgumentNullException(nameof(connection));
+
+            var script = GetInstallScript(schema, enableHeavyMigrations);
+
+            connection.Execute(script, commandTimeout: 0);
+        }
+
+        public static string GetInstallScript(string schema, bool enableHeavyMigrations)
+        {
+            var script = GetStringResource(
+                typeof(SqlServerObjectsInstaller).GetTypeInfo().Assembly,
+                "Hangfire.SqlServer.Install.sql");
+
+            script = script.Replace("$(HangFireSchema)", !string.IsNullOrWhiteSpace(schema) ? schema : Constants.DefaultSchema);
+
+            if (!enableHeavyMigrations)
+            {
+                script = script.Replace("--SET @DISABLE_HEAVY_MIGRATIONS = 1;", "SET @DISABLE_HEAVY_MIGRATIONS = 1;");
+            }
+
+            return script;
         }
 
         private static string GetStringResource(Assembly assembly, string resourceName)
@@ -85,10 +69,8 @@ namespace Hangfire.SqlServer
             {
                 if (stream == null) 
                 {
-                    throw new InvalidOperationException(String.Format(
-                        "Requested resource `{0}` was not found in the assembly `{1}`.",
-                        resourceName,
-                        assembly));
+                    throw new InvalidOperationException(
+                        $"Requested resource `{resourceName}` was not found in the assembly `{assembly}`.");
                 }
 
                 using (var reader = new StreamReader(stream))
@@ -96,18 +78,6 @@ namespace Hangfire.SqlServer
                     return reader.ReadToEnd();
                 }
             }
-        }
-
-        private static class SqlEngineEdition
-        {
-// ReSharper disable UnusedMember.Local
-            // See article http://technet.microsoft.com/en-us/library/ms174396.aspx for details on EngineEdition
-            public const int Personal = 1;
-            public const int Standard = 2;
-            public const int Enterprise = 3;
-            public const int Express = 4;
-            public const int SqlAzure = 5;
-// ReSharper restore UnusedMember.Local
         }
     }
 }

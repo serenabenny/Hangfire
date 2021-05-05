@@ -20,8 +20,11 @@ using Hangfire.Annotations;
 using Microsoft.Owin.Infrastructure;
 using Owin;
 
+// ReSharper disable once CheckNamespace
 namespace Hangfire.Dashboard
 {
+    /// <exclude />
+    [Obsolete("Please use `IAppBuilder.UseHangfireDashboard` OWIN extension method instead. Will be removed in version 2.0.0.")]
     public static class DashboardOwinExtensions
     {
         internal static readonly IAuthorizationFilter[] DefaultAuthorizationFilters =
@@ -66,7 +69,7 @@ namespace Hangfire.Dashboard
         /// </summary>
         /// <param name="app">The app builder</param>
         /// <param name="dashboardPath">The path to map dashboard</param>
-        /// <param name="appPath">The application path on Back To Site link</param>
+        /// <param name="appPath">The application path on Back To Site link. Pass null in order to hide the Back To Site link.</param>
         [Obsolete("Please use `IAppBuilder.UseHangfireDashboard` OWIN extension method instead. Will be removed in version 2.0.0.")]
         public static void MapHangfireDashboard(
             this IAppBuilder app,
@@ -98,7 +101,7 @@ namespace Hangfire.Dashboard
         /// <summary>
         /// Maps dashboard to the app builder pipeline at the specified path
         /// with given authorization filters that apply to any request and
-        /// storage instance that is being used to query the information.
+        /// storage instance that is used to query the information.
         /// </summary>
         /// <param name="app">The app builder</param>
         /// <param name="dashboardPath">The path to map dashboard</param>
@@ -113,7 +116,7 @@ namespace Hangfire.Dashboard
             IEnumerable<IAuthorizationFilter> authorizationFilters,
             JobStorage storage)
         {
-            if (app == null) throw new ArgumentNullException("app");
+            if (app == null) throw new ArgumentNullException(nameof(app));
 
             SignatureConversions.AddConversions(app);
 

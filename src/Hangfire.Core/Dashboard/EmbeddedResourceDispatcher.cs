@@ -18,11 +18,10 @@ using System;
 using System.Reflection;
 using System.Threading.Tasks;
 using Hangfire.Annotations;
-using Microsoft.Owin;
 
 namespace Hangfire.Dashboard
 {
-    internal class EmbeddedResourceDispatcher : IRequestDispatcher
+    internal class EmbeddedResourceDispatcher : IDashboardDispatcher
     {
         private readonly Assembly _assembly;
         private readonly string _resourceName;
@@ -33,49 +32,37 @@ namespace Hangfire.Dashboard
             [NotNull] Assembly assembly, 
             string resourceName)
         {
-            if (contentType == null) throw new ArgumentNullException("contentType");
-            if (assembly == null) throw new ArgumentNullException("assembly");
+            if (contentType == null) throw new ArgumentNullException(nameof(contentType));
+            if (assembly == null) throw new ArgumentNullException(nameof(assembly));
             
             _assembly = assembly;
             _resourceName = resourceName;
             _contentType = contentType;
         }
 
-        public Task Dispatch(RequestDispatcherContext context)
+        public async Task Dispatch(DashboardContext context)
         {
-            var owinContext = new OwinContext(context.OwinEnvironment);
+            context.Response.ContentType = _contentType;
+            context.Response.SetExpire(DateTimeOffset.Now.AddYears(1));
 
-            owinContext.Response.ContentType = _contentType;
-            owinContext.Response.Expires = DateTime.Now.AddYears(1);
-
-            WriteResponse(owinContext.Response);
-
-            return Task.FromResult(true);
+            await WriteResponse(context.Response).ConfigureAwait(false);
         }
 
-        protected virtual void WriteResponse(IOwinResponse response)
+        protected virtual Task WriteResponse(DashboardResponse response)
         {
-            WriteResource(response, _assembly, _resourceName);
+            return WriteResource(response, _assembly, _resourceName);
         }
 
-        protected void WriteResource(IOwinResponse response, Assembly assembly, string resourceName)
+        protected async Task WriteResource(DashboardResponse response, Assembly assembly, string resourceName)
         {
             using (var inputStream = assembly.GetManifestResourceStream(resourceName))
             {
                 if (inputStream == null)
                 {
-                    throw new ArgumentException(string.Format(
-                        @"Resource with name {0} not found in assembly {1}.",
-                        resourceName, assembly));
+                    throw new ArgumentException($@"Resource with name {resourceName} not found in assembly {assembly}.");
                 }
 
-                var buffer = new byte[Math.Min(inputStream.Length, 4096)];
-                var readLength = inputStream.Read(buffer, 0, buffer.Length);
-                while (readLength > 0)
-                {
-                    response.Write(buffer, 0, readLength);
-                    readLength = inputStream.Read(buffer, 0, buffer.Length);
-                }
+                await inputStream.CopyToAsync(response.Body).ConfigureAwait(false);
             }
         }
     }

@@ -20,6 +20,8 @@ using Hangfire.Dashboard;
 
 namespace Hangfire
 {
+    /// <exclude />
+    [Obsolete]
     internal class BootstrapperConfiguration : IBootstrapperConfiguration
     {
         public BootstrapperConfiguration()
@@ -37,9 +39,9 @@ namespace Hangfire
         public string AppPath { get; private set; }
         public JobStorage Storage { get; private set; }
         public JobActivator Activator { get; private set; }
-        public List<Func<BackgroundJobServer>> Servers { get; private set; }
+        public List<Func<BackgroundJobServer>> Servers { get; }
         public IAuthorizationFilter[] AuthorizationFilters { get; private set; }
-        public List<object> Filters { get; private set; } 
+        public List<object> Filters { get; } 
 
         public void UseAuthorizationFilters(params IAuthorizationFilter[] filters)
         {

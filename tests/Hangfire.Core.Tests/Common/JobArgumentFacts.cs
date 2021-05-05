@@ -1,12 +1,16 @@
 ﻿using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Globalization;
+using System.Linq;
+using System.Reflection;
 using Hangfire.Common;
+using Hangfire.Storage;
 using Moq;
 using Newtonsoft.Json;
 using Xunit;
+
+#pragma warning disable 618
 
 namespace Hangfire.Core.Tests.Common
 {
@@ -114,7 +118,8 @@ namespace Hangfire.Core.Tests.Common
 			CreateAndPerform(Int64Value);
 		}
 
-		private const UInt64 UInt64Value = UInt64.MaxValue;
+#if !NETCOREAPP1_0
+        private const UInt64 UInt64Value = UInt64.MaxValue;
 		public void Method(UInt64 value) { Assert.Equal(UInt64Value, value); }
 
 		[Fact]
@@ -122,8 +127,9 @@ namespace Hangfire.Core.Tests.Common
 		{
 			CreateAndPerform(UInt64Value);
 		}
+#endif
 
-		private const Int16 Int16Value = Int16.MaxValue;
+        private const Int16 Int16Value = Int16.MaxValue;
 		public void Method(Int16 value) { Assert.Equal(Int16Value, value); }
 
 		[Fact]
@@ -181,16 +187,18 @@ namespace Hangfire.Core.Tests.Common
 			}
 		}
 
-		private static readonly CultureInfo CultureInfoValue = CultureInfo.GetCultureInfo("ru-RU");
+#if !NETCOREAPP1_0
+        private static readonly CultureInfo CultureInfoValue = new CultureInfo("ru-RU");
 		public void Method(CultureInfo value) { Assert.Equal(CultureInfoValue, value); }
 
-		[Fact]
+        [Fact]
 		public void CultureInfoValues_AreBeingDeserializedCorrectly()
 		{
 			CreateAndPerform(CultureInfoValue);
 		}
+#endif
 
-		private const DayOfWeek EnumValue = DayOfWeek.Saturday;
+        private const DayOfWeek EnumValue = DayOfWeek.Saturday;
 		public void Method(DayOfWeek value) { Assert.Equal(EnumValue, value); }
 
 		[Fact]
@@ -281,12 +289,25 @@ namespace Hangfire.Core.Tests.Common
 			CreateAndPerform(CustomStructValue, true);
 		}
 
-		public class MyClass
+#pragma warning disable 659
+        public class MyClass : IEquatable<MyClass>
 		{
 			public DateTime CreatedAt { get; set; }
-		}
-		
-		private static readonly MyClass CustomClassValue = new MyClass { CreatedAt = DateTime.UtcNow };
+
+            public bool Equals(MyClass other)
+            {
+                if (other == null) return false;
+                return CreatedAt.Equals(other.CreatedAt);
+            }
+
+            public override bool Equals(object obj)
+            {
+                return Equals(obj as MyClass);
+            }
+        }
+#pragma warning restore 659
+
+        private static readonly MyClass CustomClassValue = new MyClass { CreatedAt = DateTime.UtcNow };
 		public void Method(MyClass value) { Assert.Equal(CustomClassValue.CreatedAt, value.CreatedAt); }
 
 		[Fact]
@@ -297,27 +318,36 @@ namespace Hangfire.Core.Tests.Common
 
 		private void CreateAndPerform<T>(T argumentValue, bool checkJsonOnly = false)
 		{
-			var type = typeof(JobArgumentFacts);
+            var type = typeof(JobArgumentFacts);
 			var methodInfo = type.GetMethod("Method", new[] { typeof(T) });
 
 			var serializationMethods = new List<Tuple<string, Func<string>>>();
 
-			if (!checkJsonOnly)
+#if !NETCOREAPP1_0
+            if (!checkJsonOnly)
 			{
 				var converter = TypeDescriptor.GetConverter(typeof(T));
 				serializationMethods.Add(new Tuple<string, Func<string>>(
 					"TypeDescriptor",
 					() => converter.ConvertToInvariantString(argumentValue)));
 			}
+#endif
 
-			serializationMethods.Add(new Tuple<string, Func<string>>(
+            serializationMethods.Add(new Tuple<string, Func<string>>(
 				"JSON",
 				() => JsonConvert.SerializeObject(argumentValue)));
 
 			foreach (var method in serializationMethods)
-			{
-				var job = new Job(type, methodInfo, new[] { method.Item2() });
-				job.Perform(_activator.Object, _token.Object);	
+            {
+                var data = new InvocationData(
+                    methodInfo?.DeclaringType?.AssemblyQualifiedName,
+                    methodInfo?.Name,
+                    JobHelper.ToJson(methodInfo?.GetParameters().Select(x => x.ParameterType).ToArray()),
+                    JobHelper.ToJson(new[] { method.Item2() }));
+
+                var job = data.DeserializeJob();
+
+                Assert.Equal(argumentValue, job.Args[0]);
 			}
 		}
 	}

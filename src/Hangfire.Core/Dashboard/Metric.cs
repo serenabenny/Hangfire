@@ -23,7 +23,13 @@ namespace Hangfire.Dashboard
             Value = value;
         }
 
-        public string Value { get; private set; }
+        public Metric(long value)
+        {
+            Value = value.ToString("N0");
+            IntValue = value;
+        }
+
+        public string Value { get; }
         public long IntValue { get; set; }
         public MetricStyle Style { get; set; }
         public bool Highlighted { get; set; }
@@ -39,7 +45,7 @@ namespace Hangfire.Dashboard
         Danger,
     }
 
-    public static class MetricStyleExtensions
+    internal static class MetricStyleExtensions
     {
         public static string ToClassName(this MetricStyle style)
         {

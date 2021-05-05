@@ -16,23 +16,23 @@
 
 using System;
 using System.Globalization;
-using System.Threading;
 using Hangfire.Client;
 using Hangfire.Common;
+using Hangfire.Logging;
 using Hangfire.Server;
 
 namespace Hangfire
 {
     public sealed class CaptureCultureAttribute : JobFilterAttribute, IClientFilter, IServerFilter
     {
+        private readonly ILog _logger = LogProvider.GetLogger(typeof(CaptureCultureAttribute));
+
         public void OnCreating(CreatingContext filterContext)
         {
-            if (filterContext == null) throw new ArgumentNullException("filterContext");
+            if (filterContext == null) throw new ArgumentNullException(nameof(filterContext));
 
-            filterContext.SetJobParameter(
-                "CurrentCulture", Thread.CurrentThread.CurrentCulture.Name);
-            filterContext.SetJobParameter(
-                "CurrentUICulture", Thread.CurrentThread.CurrentUICulture.Name);
+            filterContext.SetJobParameter("CurrentCulture", CultureInfo.CurrentCulture.Name);
+            filterContext.SetJobParameter("CurrentUICulture", CultureInfo.CurrentUICulture.Name);
         }
 
         public void OnCreated(CreatedContext filterContext)
@@ -44,34 +44,66 @@ namespace Hangfire
             var cultureName = filterContext.GetJobParameter<string>("CurrentCulture");
             var uiCultureName = filterContext.GetJobParameter<string>("CurrentUICulture");
 
-            var thread = Thread.CurrentThread;
-            
-            if (!String.IsNullOrEmpty(cultureName))
+            try
             {
-                filterContext.Items["PreviousCulture"] = thread.CurrentCulture;
-                thread.CurrentCulture = CultureInfo.GetCultureInfo(cultureName);
+                if (cultureName != null)
+                {
+                    filterContext.Items["PreviousCulture"] = CultureInfo.CurrentCulture;
+                    SetCurrentCulture(new CultureInfo(cultureName));
+                }
+            }
+            catch (CultureNotFoundException ex)
+            {
+                // TODO: Make this overridable, and start with throwing an exception
+                _logger.WarnException($"Unable to set CurrentCulture for job {filterContext.BackgroundJob.Id} due to an exception", ex);
             }
 
-            if (!String.IsNullOrEmpty(uiCultureName))
+            try
             {
-                filterContext.Items["PreviousUICulture"] = thread.CurrentUICulture;
-                thread.CurrentUICulture = CultureInfo.GetCultureInfo(uiCultureName);
+                if (uiCultureName != null)
+                {
+                    filterContext.Items["PreviousUICulture"] = CultureInfo.CurrentUICulture;
+                    SetCurrentUICulture(new CultureInfo(uiCultureName));
+                }
+            }
+            catch (CultureNotFoundException ex)
+            {
+                // TODO: Make this overridable, and start with throwing an exception
+                _logger.WarnException($"Unable to set CurrentUICulture for job {filterContext.BackgroundJob.Id} due to an exception", ex);
             }
         }
 
         public void OnPerformed(PerformedContext filterContext)
         {
-            if (filterContext == null) throw new ArgumentNullException("filterContext");
+            if (filterContext == null) throw new ArgumentNullException(nameof(filterContext));
 
-            var thread = Thread.CurrentThread;
             if (filterContext.Items.ContainsKey("PreviousCulture"))
             {
-                thread.CurrentCulture = (CultureInfo) filterContext.Items["PreviousCulture"];
+                SetCurrentCulture((CultureInfo) filterContext.Items["PreviousCulture"]);
             }
             if (filterContext.Items.ContainsKey("PreviousUICulture"))
             {
-                thread.CurrentUICulture = (CultureInfo) filterContext.Items["PreviousUICulture"];
+                SetCurrentUICulture((CultureInfo)filterContext.Items["PreviousUICulture"]);
             }
+        }
+        
+        private static void SetCurrentCulture(CultureInfo value)
+        {
+#if !NETSTANDARD1_3
+            System.Threading.Thread.CurrentThread.CurrentCulture = value;
+#else
+            CultureInfo.CurrentCulture = value;
+#endif
+        }
+
+        // ReSharper disable once InconsistentNaming
+        private static void SetCurrentUICulture(CultureInfo value)
+        {
+#if !NETSTANDARD1_3
+            System.Threading.Thread.CurrentThread.CurrentUICulture = value;
+#else
+            CultureInfo.CurrentUICulture = value;
+#endif
         }
     }
 }

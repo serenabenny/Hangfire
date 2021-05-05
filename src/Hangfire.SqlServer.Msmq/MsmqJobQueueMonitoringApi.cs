@@ -18,7 +18,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Messaging;
-using Rsft.Lib.Msmq.MessageCounter;
+using MQTools;
 
 namespace Hangfire.SqlServer.Msmq
 {
@@ -29,8 +29,8 @@ namespace Hangfire.SqlServer.Msmq
 
         public MsmqJobQueueMonitoringApi(string pathPattern, IEnumerable<string> queues)
         {
-            if (pathPattern == null) throw new ArgumentNullException("pathPattern");
-            if (queues == null) throw new ArgumentNullException("queues");
+            if (pathPattern == null) throw new ArgumentNullException(nameof(pathPattern));
+            if (queues == null) throw new ArgumentNullException(nameof(queues));
 
             _pathPattern = pathPattern;
             _queues = queues;
@@ -41,26 +41,24 @@ namespace Hangfire.SqlServer.Msmq
             return _queues;
         }
 
-        public IEnumerable<int> GetEnqueuedJobIds(string queue, int @from, int perPage)
+        public IEnumerable<long> GetEnqueuedJobIds(string queue, int @from, int perPage)
         {
-            var result = new List<int>();
+            var result = new List<long>();
 
             using (var messageQueue = new MessageQueue(String.Format(_pathPattern, queue)))
             {
                 var current = 0;
-                var end = @from + perPage;
+                var end = from + perPage;
                 var enumerator = messageQueue.GetMessageEnumerator2();
-
-                var formatter = new BinaryMessageFormatter();
 
                 while (enumerator.MoveNext())
                 {
-                    if (current >= @from && current < end)
+                    if (current >= from && current < end)
                     {
                         var message = enumerator.Current;
+                        if (message == null) continue;
 
-                        message.Formatter = formatter;
-                        result.Add(int.Parse((string)message.Body));
+                        result.Add(long.Parse(message.Label));
                     }
 
                     if (current >= end) break;
@@ -72,9 +70,9 @@ namespace Hangfire.SqlServer.Msmq
             return result;
         }
 
-        public IEnumerable<int> GetFetchedJobIds(string queue, int @from, int perPage)
+        public IEnumerable<long> GetFetchedJobIds(string queue, int @from, int perPage)
         {
-            return Enumerable.Empty<int>();
+            return Enumerable.Empty<long>();
         }
 
         public EnqueuedAndFetchedCountDto GetEnqueuedAndFetchedCount(string queue)

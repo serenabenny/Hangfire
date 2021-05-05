@@ -1,9 +1,8 @@
 ﻿using System;
 using System.Linq;
-using Hangfire.SqlServer.Msmq;
 using Xunit;
 
-namespace Hangfire.Msmq.Tests
+namespace Hangfire.SqlServer.Msmq.Tests
 {
     public class MsmqJobQueueMonitoringApiFacts
     {
@@ -84,6 +83,19 @@ namespace Hangfire.Msmq.Tests
             Assert.Equal(2, result.Length);
             Assert.Equal(4, result[0]);
             Assert.Equal(5, result[1]);
+        }
+
+        [Fact, CleanMsmqQueue("my-queue")]
+        public void GetEnqueuedJobIds_ReturnsCorrectResult_WhenJobIdIsLongValue()
+        {
+            MsmqUtils.EnqueueJobId("my-queue", (int.MaxValue + 1L).ToString());
+
+            var api = CreateMonitoringApi();
+
+            var result = api.GetEnqueuedJobIds("my-queue", 0, 1).ToArray();
+
+            Assert.Equal(1, result.Length);
+            Assert.Equal(int.MaxValue + 1L, result[0]);
         }
 
         private static MsmqJobQueueMonitoringApi CreateMonitoringApi()

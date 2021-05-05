@@ -1,4 +1,6 @@
-﻿using System;
+﻿using Moq;
+using System;
+using System.Data.Common;
 using System.Linq;
 using System.Transactions;
 using Xunit;
@@ -32,40 +34,48 @@ namespace Hangfire.SqlServer.Tests
             Assert.Equal("options", exception.ParamName);
         }
 
-        [Fact, CleanDatabase]
-        public void Ctor_CanCreateSqlServerStorage_WithExistingConnection()
+        [Theory, CleanDatabase]
+        [InlineData(false), InlineData(true)]
+        public void Ctor_CanCreateSqlServerStorage_WithExistingConnection(bool useMicrosoftDataSqlClient)
         {
-            var connection = ConnectionUtils.CreateConnection();
+            var connection = ConnectionUtils.CreateConnection(useMicrosoftDataSqlClient);
             var storage = new SqlServerStorage(connection);
 
             Assert.NotNull(storage);
         }
 
-        [Fact, CleanDatabase]
-        public void Ctor_InitializesDefaultJobQueueProvider_AndPassesCorrectOptions()
+        [Fact]
+        public void Ctor_ThrowsAnException_WhenConnectionFactoryIsNull()
         {
-            var storage = CreateStorage();
-            var providers = storage.QueueProviders;
+            Func<DbConnection> connectionFactory = null;
 
-            var provider = (SqlServerJobQueueProvider)providers.GetProvider("default");
+            var exception = Assert.Throws<ArgumentNullException>(
+                () => new SqlServerStorage(connectionFactory));
 
-            Assert.Same(_options, provider.Options);
+            Assert.Equal("connectionFactory", exception.ParamName);
         }
 
-        [Fact, CleanDatabase]
-        public void GetConnection_ReturnsExistingConnection_WhenStorageUsesIt()
+        [Theory]
+        [InlineData(false), InlineData(true)]
+        public void Ctor_ThrowsAnException_WhenOptionsValueIsNull_WithConnectionFactory(bool useMicrosoftDataSqlClient)
         {
-            var connection = ConnectionUtils.CreateConnection();
-            var storage = new SqlServerStorage(connection);
+            Func<DbConnection> connectionFactory = () => ConnectionUtils.CreateConnection(useMicrosoftDataSqlClient);
+            var exception = Assert.Throws<ArgumentNullException>(
+                () => new SqlServerStorage(connectionFactory, null));
 
-            using (var storageConnection = (SqlServerConnection) storage.GetConnection())
-            {
-                Assert.Same(connection, storageConnection.Connection);
-                Assert.False(storageConnection.OwnsConnection);
-            }
+            Assert.Equal("options", exception.ParamName);
         }
 
-        [Fact, CleanDatabase(IsolationLevel.ReadUncommitted)]
+        [Fact]
+        public void CreateAndOpenConnection_UsesConnectionFactory()
+        {
+            var connection = new Mock<DbConnection>();
+            var storage = new SqlServerStorage(() => connection.Object, _options);
+
+            Assert.Same(connection.Object, storage.CreateAndOpenConnection());
+        }
+
+        [Fact, CleanDatabase(isolationLevel: IsolationLevel.ReadUncommitted)]
         public void GetMonitoringApi_ReturnsNonNullInstance()
         {
             var storage = CreateStorage();
@@ -80,7 +90,6 @@ namespace Hangfire.SqlServer.Tests
             using (var connection = (SqlServerConnection)storage.GetConnection())
             {
                 Assert.NotNull(connection);
-                Assert.True(connection.OwnsConnection);
             }
         }
 

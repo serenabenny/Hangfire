@@ -1,4 +1,4 @@
-﻿// This file is part of Hangfire.
+// This file is part of Hangfire.
 // Copyright © 2013-2014 Sergey Odinokov.
 // 
 // Hangfire is free software: you can redistribute it and/or modify
@@ -16,32 +16,66 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
+using Hangfire.Annotations;
 using Hangfire.Common;
 using Hangfire.Logging;
 using Hangfire.States;
 using Hangfire.Storage;
-using Newtonsoft.Json;
 
 namespace Hangfire
 {
     public class ContinuationsSupportAttribute : JobFilterAttribute, IElectStateFilter, IApplyStateFilter
     {
-        private static readonly TimeSpan AddJobLockTimeout = TimeSpan.FromSeconds(1);
-        private static readonly TimeSpan ContinuationStateFetchTimeout = TimeSpan.FromSeconds(5);
+        private static readonly TimeSpan AddJobLockTimeout = TimeSpan.FromMinutes(1);
+        private static readonly TimeSpan ContinuationStateFetchTimeout = TimeSpan.FromMinutes(1);
+        private static readonly TimeSpan ContinuationInvalidTimeout = TimeSpan.FromMinutes(15);
 
-        private static readonly ILog Logger = LogProvider.GetCurrentClassLogger();
+        private readonly ILog _logger = LogProvider.For<ContinuationsSupportAttribute>();
 
+        private readonly bool _pushResults;
         private readonly HashSet<string> _knownFinalStates;
+        private readonly IBackgroundJobStateChanger _stateChanger;
 
         public ContinuationsSupportAttribute()
-            : this(new HashSet<string> { DeletedState.StateName, SucceededState.StateName })
+            : this(false)
+        {
+        }
+
+        public ContinuationsSupportAttribute(bool pushResults)
+            : this(pushResults, new HashSet<string> { DeletedState.StateName, SucceededState.StateName })
         {
         }
 
         public ContinuationsSupportAttribute(HashSet<string> knownFinalStates)
+            : this(false, knownFinalStates)
         {
+        }
+
+        public ContinuationsSupportAttribute(bool pushResults, HashSet<string> knownFinalStates)
+            : this(pushResults, knownFinalStates, new BackgroundJobStateChanger())
+        {
+        }
+
+        public ContinuationsSupportAttribute(
+            [NotNull] HashSet<string> knownFinalStates,
+            [NotNull] IBackgroundJobStateChanger stateChanger)
+            : this(false, knownFinalStates, stateChanger)
+        {
+        }
+
+        public ContinuationsSupportAttribute(
+            bool pushResults,
+            [NotNull] HashSet<string> knownFinalStates, 
+            [NotNull] IBackgroundJobStateChanger stateChanger)
+        {
+            if (knownFinalStates == null) throw new ArgumentNullException(nameof(knownFinalStates));
+            if (stateChanger == null) throw new ArgumentNullException(nameof(stateChanger));
+
+            _pushResults = pushResults;
             _knownFinalStates = knownFinalStates;
+            _stateChanger = stateChanger;
 
             // Ensure this filter is the last filter in the chain to start
             // continuations on the last candidate state only.
@@ -72,6 +106,18 @@ namespace Hangfire
             }
         }
 
+        internal static List<Continuation> DeserializeContinuations(string serialized)
+        {
+            var continuations =  SerializationHelper.Deserialize<List<Continuation>>(serialized);
+
+            if (continuations != null && continuations.TrueForAll(x => x.JobId == null))
+            {
+                continuations = SerializationHelper.Deserialize<List<Continuation>>(serialized, SerializationOption.User);
+            }
+
+            return continuations ?? new List<Continuation>();
+        }
+
         private void AddContinuation(ElectStateContext context, AwaitingState awaitingState)
         {
             var connection = context.Connection;
@@ -84,7 +130,19 @@ namespace Hangfire
             using (connection.AcquireDistributedJobLock(parentId, AddJobLockTimeout))
             {
                 var continuations = GetContinuations(connection, parentId);
-                continuations.Add(new Continuation { JobId = context.JobId, Options = awaitingState.Options });
+
+                // Continuation may be already added. This may happen, when outer transaction
+                // was failed after adding a continuation last time, since the addition is
+                // performed outside of an outer transaction.
+                if (!continuations.Exists(x => x.JobId == context.BackgroundJob.Id))
+                {
+                    continuations.Add(new Continuation { JobId = context.BackgroundJob.Id, Options = awaitingState.Options });
+
+                    // Set continuation only after ensuring that parent job still
+                    // exists. Otherwise we could create add non-expiring (garbage)
+                    // parameter for the parent job.
+                    SetContinuations(connection, parentId, continuations);
+                }
 
                 var jobData = connection.GetJobData(parentId);
                 if (jobData == null)
@@ -93,33 +151,33 @@ namespace Hangfire
                     // the system should throw an exception instead of creating
                     // corrupted state.
                     throw new InvalidOperationException(
-                        String.Format("Can not add a continuation: parent background job '{0}' does not exist.", parentId));
+                        $"Can not add a continuation: parent background job '{parentId}' does not exist.");
                 }
 
                 var currentState = connection.GetStateData(parentId);
-
-                // Set continuation only after ensuring that parent job still
-                // exists. Otherwise we could create add non-expiring (garbage)
-                // parameter for the parent job.
-                SetContinuations(connection, parentId, continuations);
 
                 if (currentState != null && _knownFinalStates.Contains(currentState.Name))
                 {
                     var startImmediately = !awaitingState.Options.HasFlag(JobContinuationOptions.OnlyOnSucceededState) ||
                         currentState.Name == SucceededState.StateName;
 
+                    if (_pushResults && currentState.Data.TryGetValue("Result", out var antecedentResult))
+                    {
+                        context.Connection.SetJobParameter(context.BackgroundJob.Id, "AntecedentResult", antecedentResult);
+                    }
+
                     context.CandidateState = startImmediately
                         ? awaitingState.NextState
-                        : new DeletedState { Reason = "Missed continuation" };
+                        : new DeletedState { Reason = "Continuation condition was not met" };
                 }
             }
         }
 
-        private static void ExecuteContinuationsIfExist(ElectStateContext context)
+        private void ExecuteContinuationsIfExist(ElectStateContext context)
         {
-            // The following lines are being executed inside a distributed job lock,
+            // The following lines are executed inside a distributed job lock,
             // so it is safe to get continuation list here.
-            var continuations = GetContinuations(context.Connection, context.JobId);
+            var continuations = GetContinuations(context.Connection, context.BackgroundJob.Id);
             var nextStates = new Dictionary<string, IState>();
 
             // Getting continuation data for all continuations – state they are waiting 
@@ -128,7 +186,7 @@ namespace Hangfire
             {
                 if (String.IsNullOrWhiteSpace(continuation.JobId)) continue;
 
-                var currentState = GetContinuaionState(context, continuation.JobId, ContinuationStateFetchTimeout);
+                var currentState = GetContinuationState(context, continuation.JobId, ContinuationStateFetchTimeout);
                 if (currentState == null)
                 {
                     continue;
@@ -138,43 +196,66 @@ namespace Hangfire
                 // the state of a continuation, we should simply skip it.
                 if (currentState.Name != AwaitingState.StateName) continue;
 
+                IState nextState;
+
                 if (continuation.Options.HasFlag(JobContinuationOptions.OnlyOnSucceededState) &&
                     context.CandidateState.Name != SucceededState.StateName)
                 {
-                    nextStates.Add(continuation.JobId, new DeletedState { Reason = "Missed continuation" });
-                    continue;
+                    nextState = new DeletedState { Reason = "Continuation condition was not met" };
                 }
-
-                IState nextState;
-
-                try
+                else
                 {
-                    nextState = JsonConvert.DeserializeObject<IState>(
-                        currentState.Data["NextState"],
-                        new JsonSerializerSettings { TypeNameHandling = TypeNameHandling.Objects });
-                }
-                catch (Exception ex)
-                {
-                    nextState = new FailedState(ex)
+                    try
                     {
-                        Reason = "Can not start the continuation due to de-serialization error."
-                    };
+                        nextState = SerializationHelper.Deserialize<IState>(currentState.Data["NextState"], SerializationOption.TypedInternal);
+                    }
+                    catch (Exception ex)
+                    {
+                        nextState = new FailedState(ex)
+                        {
+                            Reason = "An error occurred while deserializing the continuation"
+                        };
+                    }
                 }
 
-                nextStates.Add(continuation.JobId, nextState);
+                if (!nextStates.ContainsKey(continuation.JobId))
+                {
+                    // Duplicate continuations possible, when they were added before version 1.6.10.
+                    // Please see details in comments for the AddContinuation method near the line
+                    // with checking for existence (continuations.Exists).
+                    nextStates.Add(continuation.JobId, nextState);
+                }
+            }
+            
+            string antecedentResult = null;
+
+            if (_pushResults)
+            {
+                var serializedData = context.CandidateState.SerializeData();
+                serializedData.TryGetValue("Result", out antecedentResult);
             }
 
             foreach (var tuple in nextStates)
             {
-                context.StateMachine.ChangeState(tuple.Key, tuple.Value, new[] { AwaitingState.StateName });
+                if (antecedentResult != null)
+                {
+                    context.Connection.SetJobParameter(tuple.Key, "AntecedentResult", antecedentResult);
+                }
+
+                _stateChanger.ChangeState(new StateChangeContext(
+                    context.Storage,
+                    context.Connection,
+                    tuple.Key,
+                    tuple.Value,
+                    AwaitingState.StateName));
             }
         }
 
-        private static StateData GetContinuaionState(ElectStateContext context, string continuationJobId, TimeSpan timeout)
+        private StateData GetContinuationState(ElectStateContext context, string continuationJobId, TimeSpan timeout)
         {
             StateData currentState = null;
 
-            var started = DateTime.UtcNow;
+            var started = Stopwatch.StartNew();
             var firstAttempt = true;
 
             while (true)
@@ -182,10 +263,8 @@ namespace Hangfire
                 var continuationData = context.Connection.GetJobData(continuationJobId);
                 if (continuationData == null)
                 {
-                    Logger.Warn(String.Format(
-                        "Can not start continuation '{0}' for background job '{1}': continuation does not exist.",
-                        continuationJobId,
-                        context.JobId));
+                    _logger.Warn(
+                        $"Can not start continuation '{continuationJobId}' for background job '{context.BackgroundJob.Id}': continuation does not exist.");
 
                     break;
                 }
@@ -196,15 +275,23 @@ namespace Hangfire
                     break;
                 }
 
-                if (DateTime.UtcNow >= started.Add(timeout))
+                if (DateTime.UtcNow - continuationData.CreatedAt > ContinuationInvalidTimeout)
                 {
-                    throw new TimeoutException(String.Format(
-                        "Can not start continuation '{0}' for background job '{1}': timeout expired while trying to fetch continuation state.",
-                        continuationJobId,
-                        context.JobId));
+                    _logger.Warn(
+                        $"Continuation '{continuationJobId}' has been ignored: it was deemed to be aborted, because its state is still non-initialized.");
+
+                    break;
                 }
 
-                Thread.Sleep(firstAttempt ? 0 : 1);
+                if (started.Elapsed >= timeout)
+                {
+                    _logger.Warn(
+                        $"Can not start continuation '{continuationJobId}' for background job '{context.BackgroundJob.Id}': timeout expired while trying to fetch continuation state.");
+
+                    break;
+                }
+
+                Thread.Sleep(firstAttempt ? 0 : 100);
                 firstAttempt = false;
             }
 
@@ -214,20 +301,19 @@ namespace Hangfire
         private static void SetContinuations(
             IStorageConnection connection, string jobId, List<Continuation> continuations)
         {
-            connection.SetJobParameter(jobId, "Continuations", JobHelper.ToJson(continuations));
+            connection.SetJobParameter(jobId, "Continuations", SerializationHelper.Serialize(continuations));
         }
 
         private static List<Continuation> GetContinuations(IStorageConnection connection, string jobId)
         {
-            return JobHelper.FromJson<List<Continuation>>(connection.GetJobParameter(
-                jobId, "Continuations")) ?? new List<Continuation>();
+            return DeserializeContinuations(connection.GetJobParameter(jobId, "Continuations"));
         }
 
         void IApplyStateFilter.OnStateUnapplied(ApplyStateContext context, IWriteOnlyTransaction transaction)
         {
         }
 
-        private struct Continuation
+        internal struct Continuation
         {
             public string JobId { get; set; }
             public JobContinuationOptions Options { get; set; }

@@ -1,23 +1,32 @@
 Hangfire 
 =========
 
-[![Official Site](https://img.shields.io/badge/site-hangfire.io-blue.svg)](http://hangfire.io) [![Latest version](https://img.shields.io/nuget/v/Hangfire.svg)](https://www.nuget.org/packages?q=hangfire) [![Build status](https://ci.appveyor.com/api/projects/status/70m632jkycqpnsp9?svg=true)](https://ci.appveyor.com/project/odinserj/hangfire-525) [![Build Status](https://travis-ci.org/HangfireIO/Hangfire.svg)](https://travis-ci.org/HangfireIO/Hangfire)  [![License LGPLv3](https://img.shields.io/badge/license-LGPLv3-green.svg)](http://www.gnu.org/licenses/lgpl-3.0.html)
+[![Official Site](https://img.shields.io/badge/site-hangfire.io-blue.svg)](http://hangfire.io) [![Latest version](https://img.shields.io/nuget/v/Hangfire.svg)](https://www.nuget.org/packages?q=hangfire) [![License LGPLv3](https://img.shields.io/badge/license-LGPLv3-green.svg)](http://www.gnu.org/licenses/lgpl-3.0.html)
 
-Incredibly easy way to perform **fire-and-forget**, **delayed** and **recurring jobs** inside **ASP.NET applications**. CPU and I/O intensive, long-running and short-running jobs are supported. No Windows Service / Task Scheduler required. Backed by Redis, SQL Server, SQL Azure or MSMQ.
+## Build Status
 
-Hangfire provides unified programming model to handle background tasks in a **reliable way** and run them on shared hosting, dedicated hosting or in cloud. You can start with a simple setup and grow computational power for background jobs with time for these scenarios:
+&nbsp; | `master` | `dev`
+--- | --- | --- 
+**Windows** | [![Windows Build Status](https://ci.appveyor.com/api/projects/status/70m632jkycqpnsp9/branch/master?svg=true)](https://ci.appveyor.com/project/odinserj/hangfire-525)  | [![Windows Build Status](https://ci.appveyor.com/api/projects/status/70m632jkycqpnsp9/branch/dev?svg=true)](https://ci.appveyor.com/project/odinserj/hangfire-525) 
+**Linux / OS X** | [![Travis CI Build Status](https://travis-ci.org/HangfireIO/Hangfire.svg?branch=master)](https://travis-ci.org/HangfireIO/Hangfire) | [![Linux and OS X Build Status](https://travis-ci.org/HangfireIO/Hangfire.svg?branch=dev)](https://travis-ci.org/HangfireIO/Hangfire)
 
-- mass notifications/newsletter;
-- batch import from xml, csv, json;
-- creation of archives;
-- firing off web hooks;
-- deleting users;
-- building different graphs;
-- image/video processing;
-- purge temporary files;
-- recurring automated reports;
-- database maintenance;
-- *…and so on.*
+## Overview
+
+Incredibly easy way to perform **fire-and-forget**, **delayed** and **recurring jobs** inside **ASP.NET applications**. CPU and I/O intensive, long-running and short-running jobs are supported. No Windows Service / Task Scheduler required. Backed by Redis, SQL Server, SQL Azure and MSMQ.
+
+Hangfire provides a unified programming model to handle background tasks in a **reliable way** and run them on shared hosting, dedicated hosting or in cloud. You can start with a simple setup and grow computational power for background jobs with time for these scenarios:
+
+- mass notifications/newsletters
+- batch import from xml, csv or json
+- creation of archives
+- firing off web hooks
+- deleting users
+- building different graphs
+- image/video processing
+- purging temporary files
+- recurring automated reports
+- database maintenance
+- *…and so on*
 
 Hangfire is a .NET Framework alternative to [Resque](https://github.com/resque/resque), [Sidekiq](http://sidekiq.org), [delayed_job](https://github.com/collectiveidea/delayed_job), [Celery](http://www.celeryproject.org).
 
@@ -26,13 +35,13 @@ Hangfire is a .NET Framework alternative to [Resque](https://github.com/resque/r
 Installation
 -------------
 
-Hangfire is available as a NuGet package. So, you can install it using the NuGet Package Console window:
+Hangfire is available as a NuGet package. You can install it using the NuGet Package Console window:
 
 ```
 PM> Install-Package Hangfire
 ```
 
-After install, update your existing [OWIN Startup](http://www.asp.net/aspnet/overview/owin-and-katana/owin-startup-class-detection) file with the following lines of code. If you do not have this class in your project or don't know what is it, please read the [Quick start](http://docs.hangfire.io/en/latest/quickstart.html) guide to learn about how to install Hangfire.
+After installation, update your existing [OWIN Startup](http://www.asp.net/aspnet/overview/owin-and-katana/owin-startup-class-detection) file with the following lines of code. If you do not have this class in your project or don't know what is it, please read the [Quick start](http://docs.hangfire.io/en/latest/quick-start.html) guide to learn about how to install Hangfire.
 
 ```csharp
 public void Configuration(IAppBuilder app)
@@ -47,27 +56,27 @@ public void Configuration(IAppBuilder app)
 Usage
 ------
 
-This is incomplete list of features, to see all of them, check the [official site](http://hangfire.io) and the [documentation](http://docs.hangfire.io).
+This is an incomplete list of features; to see all of them, check the [official site](http://hangfire.io) and the [documentation](http://docs.hangfire.io).
 
-[**Fire-and-forget tasks**](http://docs.hangfire.io/en/latest/users-guide/background-methods/calling-methods-in-background.html)
+[**Fire-and-forget tasks**](http://docs.hangfire.io/en/latest/background-methods/calling-methods-in-background.html)
 
-Enqueued background jobs are being executed inside a dedicated worker pool threads as soon as possible, shortening your request processing time.
+Dedicated worker pool threads execute queued background jobs as soon as possible, shortening your request's processing time.
 
 ```csharp
 BackgroundJob.Enqueue(() => Console.WriteLine("Simple!"));
 ```
 
-[**Delayed tasks**](http://docs.hangfire.io/en/latest/users-guide/background-methods/calling-methods-with-delay.html)
+[**Delayed tasks**](http://docs.hangfire.io/en/latest/background-methods/calling-methods-with-delay.html)
 
-Scheduled background jobs are being executed only after given amount of time.
+Scheduled background jobs are executed only after a given amount of time.
 
 ```csharp
 BackgroundJob.Schedule(() => Console.WriteLine("Reliable!"), TimeSpan.FromDays(7));
 ```
 
-[**Recurring tasks**](http://docs.hangfire.io/en/latest/users-guide/background-methods/performing-recurrent-tasks.html)
+[**Recurring tasks**](http://docs.hangfire.io/en/latest/background-methods/performing-recurrent-tasks.html)
 
-Recurring jobs were never been simpler, just call the following method to perform any kind of recurring task using the [CRON expressions](http://en.wikipedia.org/wiki/Cron#CRON_expression).
+Recurring jobs have never been simpler; just call the following method to perform any kind of recurring task using the [CRON expressions](http://en.wikipedia.org/wiki/Cron#CRON_expression).
 
 ```csharp
 RecurringJob.AddOrUpdate(() => Console.WriteLine("Transparent!"), Cron.Daily);
@@ -82,9 +91,9 @@ var id = BackgroundJob.Enqueue(() => Console.WriteLine("Hello, "));
 BackgroundJob.ContinueWith(id, () => Console.WriteLine("world!"));
 ```
 
-**Process them inside a web application…**
+**Process background tasks inside a web application…**
 
-You can process background tasks in any OWIN compatible application frameworks, including [ASP.NET MVC](http://www.asp.net/mvc), [ASP.NET Web API](http://www.asp.net/web-api), [FubuMvc](http://fubu-project.org), [Nancy](http://nancyfx.org), etc. Forget about [AppDomain unloads, Web Garden & Web Farm issues](http://haacked.com/archive/2011/10/16/the-dangers-of-implementing-recurring-background-tasks-in-asp-net.aspx/) – Hangfire is reliable for web applications from scratch, even on shared hosting.
+You can process background tasks in any OWIN-compatible application framework, including [ASP.NET MVC](http://www.asp.net/mvc), [ASP.NET Web API](http://www.asp.net/web-api), [FubuMvc](http://fubu-project.org), [Nancy](http://nancyfx.org), etc. Forget about [AppDomain unloads, Web Garden & Web Farm issues](http://haacked.com/archive/2011/10/16/the-dangers-of-implementing-recurring-background-tasks-in-asp-net.aspx/) – Hangfire is reliable for web applications from scratch, even on shared hosting.
 
 ```csharp
 app.UseHangfireServer();
@@ -92,7 +101,7 @@ app.UseHangfireServer();
 
 **… or anywhere else**
 
-In console application, Windows Service, Azure Worker Role, etc.
+In console applications, Windows Service, Azure Worker Role, etc.
 
 ```csharp
 using (new BackgroundJobServer())
@@ -105,35 +114,30 @@ using (new BackgroundJobServer())
 Questions? Problems?
 ---------------------
 
-Open-source project are developing more smoothly, when all discussions are held in public.
+Open-source projects develop more smoothly when discussions are public.
 
-If you have any questions, problems related to the Hangfire usage or want to discuss new features, please visit the [discussion forum](http://discuss.hangfire.io). You can sign in there using your existing Google or GitHub account, so it's very simple to start using it.
+If you have any questions, problems related to Hangfire usage or if you want to discuss new features, please visit the [discussion forum](http://discuss.hangfire.io). You can sign in there using your existing Google or GitHub account, so it's very simple to start using it.
 
-If you've discovered a bug, please report it to the [Hangfire GitHub Issues](https://github.com/odinserj/Hangfire/issues?state=open). Detailed reports with stack traces, actual and expected behavours are welcome. 
+If you've discovered a bug, please report it to the [Hangfire GitHub Issues](https://github.com/HangfireIO/Hangfire/issues?state=open). Detailed reports with stack traces, actual and expected behaviours are welcome.
 
 Related Projects
 -----------------
 
-* [Hangfire.Dashboard.Authorization](https://github.com/HangfireIO/Hangfire.Dashboard.Authorization)
-* [Hangfire.Autofac](https://github.com/HangfireIO/Hangfire.Autofac)
-* [Hangfire.Ninject](https://github.com/HangfireIO/Hangfire.Ninject)
-* [Hangfire.SimpleInjector](https://github.com/devmondo/Hangfire.SimpleInjector) by [@devmondo](https://github.com/devmondo)
-* [Hangfire.Windsor](https://github.com/BredStik/Hangfire.Windsor) by [@BredStik](https://github.com/BredStik)
-* [Hangfire.TinyIoC](https://github.com/richclement/HangFire.TinyIoC) by [@richclement](https://github.com/richclement)
-* [Hangfire.Azure.QueueStorage](https://github.com/HangfireIO/Hangfire.Azure.QueueStorage)
-* [Hangfire.Azure.ServiceBusQueue](https://github.com/HangfireIO/Hangfire.Azure.ServiceBusQueue)
-* [Hangfire.Mongo](https://github.com/sergun/Hangfire.Mongo) by [@sergun](https://github.com/sergun)
-* [Hangfire.CompositeC1](https://bitbucket.org/burningice/hangfire.compositec1) by [@burningice](https://bitbucket.org/burningice)
-* [Hangfire.PostgreSql](https://github.com/frankhommers/Hangfire.PostgreSql) by [@frankhommers](https://github.com/frankhommers)
-* [Hangfire.Firebird](https://github.com/rsegerink/Hangfire.Firebird) by [@rsegerink](https://github.com/rsegerink)
-* [Hangfire.SQLite](https://github.com/vip32/Hangfire.SQLite) by [@vip32](https://github.com/vip32)
-* [Hangfire.MemoryStorage](https://github.com/perrich/Hangfire.MemoryStorage) by [@perrich](https://github.com/perrich)
-* [Hangfire.Funq](https://github.com/apilavakis/Hangfire.Funq) by [@apilavakis](https://github.com/apilavakis)
+Please see the [Extensions](http://hangfire.io/extensions.html) page on the official site.
 
 Building the sources
 ---------------------
 
-To build a solution and get assembly files, just run the following command. All build artifacts, including `*.pdb` files will be placed into the `build` folder. **Before proposing a pull request, please use this command to ensure everything is ok.** Btw, you can execute this command from Package Manager Console window.
+Prerequisites:
+* [Razor Generator](https://marketplace.visualstudio.com/items?itemName=DavidEbbo.RazorGenerator): Required if you intend to edit the cshtml files.
+* Install the MSMQ service (Microsoft Message Queue Server), if not already installed.
+
+Then, create an environment variable with Variable name `Hangfire_SqlServer_ConnectionStringTemplate` and put your connection string in the Variable value field. Example:
+
+* Variable name: `Hangfire_SqlServer_ConnectionStringTemplate`
+* Variable value: `Data Source=.\sqlexpress;Initial Catalog=Hangfire.SqlServer.Tests;Integrated Security=True;`
+
+To build a solution and get assembly files, just run the following command. All build artifacts, including `*.pdb` files, will be placed into the `build` folder. **Before proposing a pull request, please use this command to ensure everything is ok.** Btw, you can execute this command from the Package Manager Console window.
 
 ```
 build
@@ -145,7 +149,7 @@ To build NuGet packages as well as an archive file, use the `pack` command as sh
 build pack
 ```
 
-To see the full list of avalable commands, pass the `-docs` switch:
+To see the full list of available commands, pass the `-docs` switch:
 
 ```
 build -docs
@@ -153,10 +157,17 @@ build -docs
 
 Hangfire uses [psake](https://github.com/psake/psake) build automation tool. All psake tasks and functions defined in `psake-build.ps1` (for this project) and `psake-common.ps1` (for other Hangfire projects) files. Thanks to the psake project, they are very simple to use and modify!
 
+Razor templates are compiled upon save with the [Razor Generator Visual Studio extension](https://marketplace.visualstudio.com/items?itemName=DavidEbbo.RazorGenerator).  You will need this installed if you want to modify the Dashboard UI.
+
+Reporting security issues 
+--------------------------
+
+In order to give the community time to respond and upgrade we strongly urge you report all security issues privately. Please email us at [security@hangfire.io](mailto:security@hangfire.io) with details and we will respond ASAP. Security issues always take precedence over bug fixes and feature work. We can and do mark releases as "urgent" if they contain serious security fixes. 
+
 License
 --------
 
-Copyright © 2013-2014 Sergey Odinokov.
+Copyright © 2013-2021 Sergey Odinokov.
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Lesser General Public License as published by

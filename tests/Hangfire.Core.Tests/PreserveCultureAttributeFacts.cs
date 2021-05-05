@@ -1,8 +1,6 @@
-﻿using System;
+using System;
 using System.Globalization;
-using System.Threading;
 using Hangfire.Client;
-using Hangfire.Common;
 using Hangfire.Server;
 using Hangfire.States;
 using Hangfire.Storage;
@@ -22,17 +20,17 @@ namespace Hangfire.Core.Tests
         public PreserveCultureAttributeFacts()
         {
             _connection = new Mock<IStorageConnection>();
-            var job = Job.FromExpression(() => Sample());
+
+            var storage = new Mock<JobStorage>();
+            var backgroundJob = new BackgroundJobMock { Id = JobId };
             var state = new Mock<IState>();
 
             var createContext = new CreateContext(
-                _connection.Object, job, state.Object);
+                storage.Object, _connection.Object, backgroundJob.Job, state.Object);
             _creatingContext = new CreatingContext(createContext);
 
-            var workerContext = new WorkerContextMock();
-
             var performContext = new PerformContext(
-                workerContext.Object, _connection.Object, JobId, job, DateTime.UtcNow, new Mock<IJobCancellationToken>().Object);
+                _connection.Object, backgroundJob.Object, new Mock<IJobCancellationToken>().Object);
             _performingContext = new PerformingContext(performContext);
             _performedContext = new PerformedContext(performContext, null, false, null);
         }
@@ -49,8 +47,8 @@ namespace Hangfire.Core.Tests
         [Fact]
         public void OnCreating_CapturesCultures_AndSetsThemAsJobParameters()
         {
-            Thread.CurrentThread.CurrentCulture = CultureInfo.GetCultureInfo("ru-RU");
-            Thread.CurrentThread.CurrentUICulture = CultureInfo.GetCultureInfo("ru-RU");
+            CultureHelper.SetCurrentCulture("ru-RU");
+            CultureHelper.SetCurrentUICulture("ru-RU");
 
             var filter = CreateFilter();
             filter.OnCreating(_creatingContext);
@@ -60,11 +58,25 @@ namespace Hangfire.Core.Tests
         }
 
         [Fact]
+        public void OnCreating_CapturesInvariantCulture_AndSetsStringEmptyAsJobParameters()
+        {
+            CultureHelper.SetCurrentCulture(CultureInfo.InvariantCulture);
+            CultureHelper.SetCurrentUICulture(CultureInfo.InvariantCulture);
+
+            var filter = CreateFilter();
+            filter.OnCreating(_creatingContext);
+
+            Assert.Equal(String.Empty, _creatingContext.GetJobParameter<string>("CurrentCulture"));
+            Assert.Equal(String.Empty, _creatingContext.GetJobParameter<string>("CurrentUICulture"));
+        }
+
+        [Fact]
         public void OnCreated_DoesNotThrowAnException()
         {
             var filter = CreateFilter();
 
-            Assert.DoesNotThrow(() => filter.OnCreated(null));
+            // Does not throw
+            filter.OnCreated(null);
         }
 
         [Fact]
@@ -73,14 +85,30 @@ namespace Hangfire.Core.Tests
             _connection.Setup(x => x.GetJobParameter(JobId, "CurrentCulture")).Returns("\"ru-RU\"");
             _connection.Setup(x => x.GetJobParameter(JobId, "CurrentUICulture")).Returns("\"ru-RU\"");
 
-            Thread.CurrentThread.CurrentCulture = CultureInfo.GetCultureInfo("en-US");
-            Thread.CurrentThread.CurrentUICulture = CultureInfo.GetCultureInfo("en-US");
+            CultureHelper.SetCurrentCulture("en-US");
+            CultureHelper.SetCurrentUICulture("en-US");
 
             var filter = CreateFilter();
             filter.OnPerforming(_performingContext);
 
-            Assert.Equal("ru-RU", Thread.CurrentThread.CurrentCulture.Name);
-            Assert.Equal("ru-RU", Thread.CurrentThread.CurrentUICulture.Name);
+            Assert.Equal("ru-RU", CultureInfo.CurrentCulture.Name);
+            Assert.Equal("ru-RU", CultureInfo.CurrentUICulture.Name);
+        }
+
+        [Fact]
+        public void OnPerforming_SetsInvariantThreadCultures_WhenJobParametersAreEmptyStrings()
+        {
+            _connection.Setup(x => x.GetJobParameter(JobId, "CurrentCulture")).Returns("\"\"");
+            _connection.Setup(x => x.GetJobParameter(JobId, "CurrentUICulture")).Returns("\"\"");
+
+            CultureHelper.SetCurrentCulture("en-US");
+            CultureHelper.SetCurrentUICulture("en-US");
+
+            var filter = CreateFilter();
+            filter.OnPerforming(_performingContext);
+
+            Assert.Equal(CultureInfo.InvariantCulture, CultureInfo.CurrentCulture);
+            Assert.Equal(CultureInfo.InvariantCulture, CultureInfo.CurrentUICulture);
         }
 
         [Fact]
@@ -89,14 +117,14 @@ namespace Hangfire.Core.Tests
             _connection.Setup(x => x.GetJobParameter(JobId, "CurrentCulture")).Returns((string)null);
             _connection.Setup(x => x.GetJobParameter(JobId, "CurrentUICulture")).Returns((string)null);
 
-            Thread.CurrentThread.CurrentCulture = CultureInfo.GetCultureInfo("en-US");
-            Thread.CurrentThread.CurrentUICulture = CultureInfo.GetCultureInfo("en-US");
+            CultureHelper.SetCurrentCulture("en-US");
+            CultureHelper.SetCurrentUICulture("en-US");
 
             var filter = CreateFilter();
             filter.OnPerforming(_performingContext);
 
-            Assert.Equal("en-US", Thread.CurrentThread.CurrentCulture.Name);
-            Assert.Equal("en-US", Thread.CurrentThread.CurrentUICulture.Name);
+            Assert.Equal("en-US", CultureInfo.CurrentCulture.Name);
+            Assert.Equal("en-US", CultureInfo.CurrentUICulture.Name);
         }
 
         [Fact]
@@ -113,15 +141,15 @@ namespace Hangfire.Core.Tests
             _connection.Setup(x => x.GetJobParameter(JobId, "CurrentCulture")).Returns("\"ru-RU\"");
             _connection.Setup(x => x.GetJobParameter(JobId, "CurrentUICulture")).Returns("\"ru-RU\"");
 
-            Thread.CurrentThread.CurrentCulture = CultureInfo.GetCultureInfo("en-US");
-            Thread.CurrentThread.CurrentUICulture = CultureInfo.GetCultureInfo("en-US");
+            CultureHelper.SetCurrentCulture("en-US");
+            CultureHelper.SetCurrentUICulture("en-US");
 
             var filter = CreateFilter();
             filter.OnPerforming(_performingContext);
             filter.OnPerformed(_performedContext);
 
-            Assert.Equal("en-US", Thread.CurrentThread.CurrentCulture.Name);
-            Assert.Equal("en-US", Thread.CurrentThread.CurrentUICulture.Name);
+            Assert.Equal("en-US", CultureInfo.CurrentCulture.Name);
+            Assert.Equal("en-US", CultureInfo.CurrentUICulture.Name);
         }
 
         [Fact]
@@ -130,15 +158,15 @@ namespace Hangfire.Core.Tests
             _connection.Setup(x => x.GetJobParameter(JobId, "CurrentCulture")).Returns((string)null);
             _connection.Setup(x => x.GetJobParameter(JobId, "CurrentUICulture")).Returns((string)null);
 
-            Thread.CurrentThread.CurrentCulture = CultureInfo.GetCultureInfo("en-US");
-            Thread.CurrentThread.CurrentUICulture = CultureInfo.GetCultureInfo("en-US");
+            CultureHelper.SetCurrentCulture("en-US");
+            CultureHelper.SetCurrentUICulture("en-US");
 
             var filter = CreateFilter();
             filter.OnPerforming(_performingContext);
             filter.OnPerformed(_performedContext);
 
-            Assert.Equal("en-US", Thread.CurrentThread.CurrentCulture.Name);
-            Assert.Equal("en-US", Thread.CurrentThread.CurrentUICulture.Name);
+            Assert.Equal("en-US", CultureInfo.CurrentCulture.Name);
+            Assert.Equal("en-US", CultureInfo.CurrentUICulture.Name);
         }
 
         public static void Sample() { }

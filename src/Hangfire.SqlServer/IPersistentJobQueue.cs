@@ -1,5 +1,5 @@
 // This file is part of Hangfire.
-// Copyright © 2013-2014 Sergey Odinokov.
+// Copyright Â© 2013-2014 Sergey Odinokov.
 // 
 // Hangfire is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as 
@@ -22,6 +22,15 @@ namespace Hangfire.SqlServer
     public interface IPersistentJobQueue
     {
         IFetchedJob Dequeue(string[] queues, CancellationToken cancellationToken);
-        void Enqueue(string queue, string jobId);
+
+#if FEATURE_TRANSACTIONSCOPE
+        void Enqueue(System.Data.IDbConnection connection, string queue, string jobId);
+#else
+        void Enqueue(
+            System.Data.Common.DbConnection connection, 
+            System.Data.Common.DbTransaction transaction, 
+            string queue, 
+            string jobId);
+#endif
     }
 }

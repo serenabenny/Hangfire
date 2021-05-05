@@ -16,10 +16,10 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Text;
 using Hangfire.Common;
 using Hangfire.States;
-using Newtonsoft.Json;
 
 namespace Hangfire.Dashboard
 {
@@ -112,12 +112,34 @@ namespace Hangfire.Dashboard
             this HtmlHelper helper,
             string state, IDictionary<string, string> properties)
         {
-            return Renderers[state](helper, properties);
+            var renderer = Renderers.ContainsKey(state)
+                ? Renderers[state]
+                : DefaultRenderer;
+
+            return renderer?.Invoke(helper, properties);
         }
 
         public static NonEscapedString NullRenderer(HtmlHelper helper, IDictionary<string, string> properties)
         {
             return null;
+        }
+
+        public static NonEscapedString DefaultRenderer(HtmlHelper helper, IDictionary<string, string> stateData)
+        {
+            if (stateData == null || stateData.Count == 0) return null;
+
+            var builder = new StringBuilder();
+            builder.Append("<dl class=\"dl-horizontal\">");
+
+            foreach (var item in stateData)
+            {
+                builder.Append($"<dt>{helper.HtmlEncode(item.Key)}</dt>");
+                builder.Append($"<dd>{helper.HtmlEncode(item.Value)}</dd>");
+            }
+
+            builder.Append("</dl>");
+
+            return new NonEscapedString(builder.ToString());
         }
 
         public static NonEscapedString SucceededRenderer(HtmlHelper html, IDictionary<string, string> stateData)
@@ -131,15 +153,15 @@ namespace Hangfire.Dashboard
             {
                 var latency = TimeSpan.FromMilliseconds(long.Parse(stateData["Latency"]));
 
-                builder.AppendFormat("<dt>Latency:</dt><dd>{0}</dd>", html.ToHumanDuration(latency, false));
+                builder.Append($"<dt>Latency:</dt><dd>{html.HtmlEncode(html.ToHumanDuration(latency, false))}</dd>");
 
                 itemsAdded = true;
             }
 
             if (stateData.ContainsKey("PerformanceDuration"))
             {
-                var duration = TimeSpan.FromMilliseconds(int.Parse(stateData["PerformanceDuration"]));
-                builder.AppendFormat("<dt>Duration:</dt><dd>{0}</dd>", html.ToHumanDuration(duration, false));
+                var duration = TimeSpan.FromMilliseconds(long.Parse(stateData["PerformanceDuration"]));
+                builder.Append($"<dt>Duration:</dt><dd>{html.HtmlEncode(html.ToHumanDuration(duration, false))}</dd>");
 
                 itemsAdded = true;
             }
@@ -148,7 +170,7 @@ namespace Hangfire.Dashboard
             if (stateData.ContainsKey("Result") && !String.IsNullOrWhiteSpace(stateData["Result"]))
             {
                 var result = stateData["Result"];
-                builder.AppendFormat("<dt>Result:</dt><dd>{0}</dd>", System.Net.WebUtility.HtmlEncode(result));
+                builder.Append($"<dt>Result:</dt><dd>{html.HtmlEncode(result)}</dd>");
 
                 itemsAdded = true;
             }
@@ -163,11 +185,8 @@ namespace Hangfire.Dashboard
         private static NonEscapedString FailedRenderer(HtmlHelper html, IDictionary<string, string> stateData)
         {
             var stackTrace = html.StackTrace(stateData["ExceptionDetails"]).ToString();
-            return new NonEscapedString(String.Format(
-                "<h4 class=\"exception-type\">{0}</h4><p>{1}</p>{2}",
-                stateData["ExceptionType"],
-                stateData["ExceptionMessage"],
-                stackTrace != null ? "<pre class=\"stack-trace\">" + stackTrace + "</pre>" : null));
+            return new NonEscapedString(
+                $"<h4 class=\"exception-type\">{html.HtmlEncode(stateData["ExceptionType"])}</h4><p class=\"text-muted\">{html.HtmlEncode(stateData["ExceptionMessage"])}</p><pre class=\"stack-trace\">{stackTrace}</pre>");
         }
 
         private static NonEscapedString ProcessingRenderer(HtmlHelper helper, IDictionary<string, string> stateData)
@@ -180,7 +199,7 @@ namespace Hangfire.Dashboard
             if (stateData.ContainsKey("ServerId"))
             {
                 serverId = stateData["ServerId"];
-            } 
+            }
             else if (stateData.ContainsKey("ServerName"))
             {
                 serverId = stateData["ServerName"];
@@ -189,15 +208,18 @@ namespace Hangfire.Dashboard
             if (serverId != null)
             {
                 builder.Append("<dt>Server:</dt>");
-                builder.AppendFormat(
-                    "<dd><span class=\"label label-default\">{0}</span></dd>",
-                    serverId.ToUpperInvariant());
+                builder.Append($"<dd>{helper.ServerId(serverId)}</dd>");
             }
 
-            if (stateData.ContainsKey("WorkerNumber"))
+            if (stateData.ContainsKey("WorkerId"))
             {
                 builder.Append("<dt>Worker:</dt>");
-                builder.AppendFormat("<dd>#{0}</dd>", stateData["WorkerNumber"]);
+                builder.Append($"<dd>{helper.HtmlEncode(stateData["WorkerId"].Substring(0, 8))}</dd>");
+            }
+            else if (stateData.ContainsKey("WorkerNumber"))
+            {
+                builder.Append("<dt>Worker:</dt>");
+                builder.Append($"<dd>#{helper.HtmlEncode(stateData["WorkerNumber"])}</dd>");
             }
 
             builder.Append("</dl>");
@@ -207,19 +229,16 @@ namespace Hangfire.Dashboard
 
         private static NonEscapedString EnqueuedRenderer(HtmlHelper helper, IDictionary<string, string> stateData)
         {
-            return new NonEscapedString(String.Format(
-                "<dl class=\"dl-horizontal\"><dt>Queue:</dt><dd><span class=\"label label-queue label-primary\">{0}</span></dd></dl>",
-                stateData["Queue"]));
+            return new NonEscapedString(
+                $"<dl class=\"dl-horizontal\"><dt>Queue:</dt><dd>{helper.QueueLabel(stateData["Queue"])}</dd></dl>");
         }
 
         private static NonEscapedString ScheduledRenderer(HtmlHelper helper, IDictionary<string, string> stateData)
         {
             var enqueueAt = JobHelper.DeserializeDateTime(stateData["EnqueueAt"]);
 
-            return new NonEscapedString(String.Format(
-                "<dl class=\"dl-horizontal\"><dt>Enqueue at:</dt><dd data-moment=\"{0}\">{1}</dd></dl>",
-                JobHelper.ToTimestamp(enqueueAt),
-                enqueueAt));
+            return new NonEscapedString(
+                $"<dl class=\"dl-horizontal\"><dt>Enqueue at:</dt><dd data-moment=\"{helper.HtmlEncode(JobHelper.ToTimestamp(enqueueAt).ToString(CultureInfo.InvariantCulture))}\">{helper.HtmlEncode(enqueueAt.ToString(CultureInfo.CurrentUICulture))}</dd></dl>");
         }
 
         private static NonEscapedString AwaitingRenderer(HtmlHelper helper, IDictionary<string, string> stateData)
@@ -230,27 +249,25 @@ namespace Hangfire.Dashboard
 
             if (stateData.ContainsKey("ParentId"))
             {
-                builder.AppendFormat(
-                    "<dt>Parent</dt><dd>{0}</dd>",
-                    helper.JobIdLink(stateData["ParentId"]));
+                builder.Append($"<dt>Parent</dt><dd>{helper.JobIdLink(stateData["ParentId"])}</dd>");
             }
 
             if (stateData.ContainsKey("NextState"))
             {
-                var nextState = JsonConvert.DeserializeObject<IState>(
-                    stateData["NextState"],
-                    new JsonSerializerSettings { TypeNameHandling = TypeNameHandling.All });
+                var nextState = SerializationHelper.Deserialize<IState>(stateData["NextState"], SerializationOption.TypedInternal);
 
-                builder.AppendFormat(
-                    "<dt>Next State</dt><dd>{0}</dd>",
-                    helper.StateLabel(nextState.Name));
+                builder.Append($"<dt>Next State</dt><dd>{helper.StateLabel(nextState.Name)}</dd>");
             }
 
             if (stateData.ContainsKey("Options"))
             {
-                builder.AppendFormat(
-                    "<dt>Options</dt><dd><code>{0}</code></dd>",
-                    helper.HtmlEncode(stateData["Options"]));
+                var optionsDescription = stateData["Options"];
+                if (Enum.TryParse(optionsDescription, out JobContinuationOptions options))
+                {
+                    optionsDescription = options.ToString("G");
+                }
+
+                builder.Append($"<dt>Options</dt><dd><code>{helper.HtmlEncode(optionsDescription)}</code></dd>");
             }
 
             builder.Append("</dl>");

@@ -19,11 +19,10 @@ using System.Diagnostics;
 using System.Net;
 using System.Text;
 using Hangfire.Storage.Monitoring;
-using Microsoft.Owin;
 
 namespace Hangfire.Dashboard
 {
-    public abstract class RazorPage 
+    public abstract class RazorPage
     {
         private Lazy<StatisticsDto> _statisticsLazy;
 
@@ -40,8 +39,9 @@ namespace Hangfire.Dashboard
         public HtmlHelper Html { get; private set; }
         public UrlHelper Url { get; private set; }
 
-        public JobStorage Storage { get; internal set; }
-        public string AppPath { get; internal set; }
+        public JobStorage Storage => Context.Storage;
+        public string AppPath => Context.Options.AppPath;
+        public DashboardOptions DashboardOptions => Context.Options;
         public Stopwatch GenerationTime { get; private set; }
 
         public StatisticsDto Statistics
@@ -53,19 +53,21 @@ namespace Hangfire.Dashboard
             }
         }
 
-        internal IOwinRequest Request { private get; set; }
-        internal IOwinResponse Response { private get; set; }
+        public DashboardContext Context { get; private set; }
 
-        public string RequestPath
-        {
-            get { return Request.Path.Value; }
-        }
+        internal DashboardRequest Request => Context.Request;
+        internal DashboardResponse Response => Context.Response;
 
+        public string RequestPath => Request.Path;
+
+        public bool IsReadOnly => Context.IsReadOnly;
+        
+        /// <exclude />
         public abstract void Execute();
 
         public string Query(string key)
         {
-            return Request.Query[key];
+            return Request.GetQuery(key);
         }
 
         public override string ToString()
@@ -73,27 +75,20 @@ namespace Hangfire.Dashboard
             return TransformText(null);
         }
 
+        /// <exclude />
         public void Assign(RazorPage parentPage)
         {
-            Request = parentPage.Request;
-            Response = parentPage.Response;
-            Storage = parentPage.Storage;
-            AppPath = parentPage.AppPath;
+            Context = parentPage.Context;
             Url = parentPage.Url;
 
             GenerationTime = parentPage.GenerationTime;
             _statisticsLazy = parentPage._statisticsLazy;
         }
 
-        internal void Assign(RequestDispatcherContext context)
+        internal void Assign(DashboardContext context)
         {
-            var owinContext = new OwinContext(context.OwinEnvironment);
-
-            Request = owinContext.Request;
-            Response = owinContext.Response;
-            Storage = context.JobStorage;
-            AppPath = context.AppPath;
-            Url = new UrlHelper(context.OwinEnvironment);
+            Context = context;
+            Url = new UrlHelper(context);
 
             _statisticsLazy = new Lazy<StatisticsDto>(() =>
             {
@@ -102,6 +97,7 @@ namespace Hangfire.Dashboard
             });
         }
 
+        /// <exclude />
         protected void WriteLiteral(string textToAppend)
         {
             if (string.IsNullOrEmpty(textToAppend))
@@ -109,12 +105,13 @@ namespace Hangfire.Dashboard
             _content.Append(textToAppend);
         }
 
+        /// <exclude />
         protected virtual void Write(object value)
         {
             if (value == null)
                 return;
             var html = value as NonEscapedString;
-            WriteLiteral(html != null ? html.ToString() : Encode(value.ToString()));
+            WriteLiteral(html?.ToString() ?? Encode(value.ToString()));
         }
 
         protected virtual object RenderBody()
