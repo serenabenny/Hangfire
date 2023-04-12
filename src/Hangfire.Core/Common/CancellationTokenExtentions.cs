@@ -1,5 +1,4 @@
-﻿// This file is part of Hangfire.
-// Copyright © 2018 Sergey Odinokov.
+﻿// This file is part of Hangfire. Copyright © 2018 Hangfire OÜ.
 // 
 // Hangfire is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as 
@@ -15,7 +14,9 @@
 // License along with Hangfire. If not, see <http://www.gnu.org/licenses/>.
 
 using System;
+using System.Diagnostics;
 using System.Threading;
+using Hangfire.Logging;
 
 namespace Hangfire.Common
 {
@@ -34,6 +35,21 @@ namespace Hangfire.Common
 
         /// <summary>
         /// Performs a wait until the specified <paramref name="timeout"/> is elapsed or the
+        /// given cancellation token is canceled and throw <see cref="OperationCanceledException"/>
+        /// exception if wait succeeded. The wait is performed on a dedicated event
+        /// wait handle to avoid using the <see cref="CancellationToken.WaitHandle"/> property
+        /// that may lead to high CPU issues.
+        /// </summary>
+        public static void WaitOrThrow(this CancellationToken cancellationToken, TimeSpan timeout)
+        {
+            if (Wait(cancellationToken, timeout))
+            {
+                throw new OperationCanceledException(cancellationToken);
+            }
+        }
+
+        /// <summary>
+        /// Performs a wait until the specified <paramref name="timeout"/> is elapsed or the
         /// given cancellation token is canceled. The wait is performed on a dedicated event
         /// wait handle to avoid using the <see cref="CancellationToken.WaitHandle"/> property
         /// that may lead to high CPU issues.
@@ -42,7 +58,30 @@ namespace Hangfire.Common
         {
             using (var cancellationEvent = GetCancellationEvent(cancellationToken))
             {
-                return cancellationEvent.WaitHandle.WaitOne(timeout);
+                var stopwatch = Stopwatch.StartNew();
+                var waitResult = cancellationEvent.WaitHandle.WaitOne(timeout);
+                stopwatch.Stop();
+                
+                var timeoutThreshold = TimeSpan.FromMilliseconds(1000);
+                var elapsedThreshold = TimeSpan.FromMilliseconds(500);
+                var protectionTime = TimeSpan.FromSeconds(1);
+
+                if (!cancellationToken.IsCancellationRequested &&
+                    timeout >= timeoutThreshold &&
+                    stopwatch.Elapsed < elapsedThreshold)
+                {
+                    try
+                    {
+                        var logger = LogProvider.GetLogger(typeof(CancellationTokenExtentions));
+                        logger.Error($"Actual wait time for non-canceled token was '{stopwatch.Elapsed}' instead of '{timeout}', wait result: {waitResult}, using protective wait. Please report this to Hangfire developers.");
+                    }
+                    finally
+                    {
+                        Thread.Sleep(protectionTime);
+                    }
+                }
+
+                return waitResult;
             }
         }
 

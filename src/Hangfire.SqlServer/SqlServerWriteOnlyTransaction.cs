@@ -1,5 +1,4 @@
-// This file is part of Hangfire.
-// Copyright © 2013-2014 Sergey Odinokov.
+// This file is part of Hangfire. Copyright © 2013-2014 Hangfire OÜ.
 // 
 // Hangfire is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as 
@@ -37,7 +36,7 @@ namespace Hangfire.SqlServer
         private readonly Queue<Action> _afterCommitCommandQueue = new Queue<Action>();
 
         private readonly SqlServerStorage _storage;
-        private readonly Func<DbConnection> _dedicatedConnectionFunc;
+        private readonly SqlServerConnection _connection;
 
         private readonly SortedDictionary<long, List<Tuple<string, SqlCommandBatchParameter[]>>> _jobCommands = new SortedDictionary<long, List<Tuple<string, SqlCommandBatchParameter[]>>>();
         private readonly SortedDictionary<string, List<Tuple<string, SqlCommandBatchParameter[]>>> _counterCommands = new SortedDictionary<string, List<Tuple<string, SqlCommandBatchParameter[]>>>();
@@ -45,55 +44,120 @@ namespace Hangfire.SqlServer
         private readonly SortedDictionary<string, List<Tuple<string, SqlCommandBatchParameter[]>>> _listCommands = new SortedDictionary<string, List<Tuple<string, SqlCommandBatchParameter[]>>>();
         private readonly SortedDictionary<string, List<Tuple<string, SqlCommandBatchParameter[]>>> _setCommands = new SortedDictionary<string, List<Tuple<string, SqlCommandBatchParameter[]>>>();
         private readonly SortedDictionary<string, List<Tuple<string, SqlCommandBatchParameter[]>>> _queueCommands = new SortedDictionary<string, List<Tuple<string, SqlCommandBatchParameter[]>>>();
+        private readonly List<Tuple<DbCommand, DbParameter, string>> _lockCommands = new List<Tuple<DbCommand, DbParameter, string>>();
+
+        private readonly List<SqlServerConnection.DisposableLock> _acquiredLocks = new List<SqlServerConnection.DisposableLock>();
 
         private readonly SortedSet<string> _lockedResources = new SortedSet<string>();
 
-        public SqlServerWriteOnlyTransaction([NotNull] SqlServerStorage storage, Func<DbConnection> dedicatedConnectionFunc)
-        {
-            if (storage == null) throw new ArgumentNullException(nameof(storage));
+        private bool _committed;
 
-            _storage = storage;
-            _dedicatedConnectionFunc = dedicatedConnectionFunc;
+        public SqlServerWriteOnlyTransaction([NotNull] SqlServerConnection connection)
+        {
+            if (connection == null) throw new ArgumentNullException(nameof(connection));
+            _connection = connection;
+            _storage = connection.Storage;
         }
+
+        public bool Committed => _committed;
 
         public override void Commit()
         {
-            _storage.UseTransaction(_dedicatedConnectionFunc(), (connection, transaction) =>
+            try
             {
-                using (var commandBatch = new SqlCommandBatch(connection, transaction, preferBatching: _storage.CommandBatchMaxTimeout.HasValue))
+                _storage.UseTransaction(_connection.DedicatedConnection, (connection, transaction) =>
                 {
-                    commandBatch.Append("set xact_abort on;set nocount on;");
-
-                    foreach (var lockedResource in _lockedResources)
+                    using (var commandBatch = new SqlCommandBatch(connection, transaction, preferBatching: _storage.CommandBatchMaxTimeout.HasValue))
                     {
-                        commandBatch.Append(
-                            "exec sp_getapplock @Resource=@resource, @LockMode=N'Exclusive'",
-                            new SqlCommandBatchParameter("@resource", DbType.String, 255) { Value = lockedResource });
+                        commandBatch.Append("set xact_abort on;set nocount on;");
+
+                        foreach (var lockedResource in _lockedResources)
+                        {
+                            commandBatch.Append(
+                                "exec sp_getapplock @Resource=@resource, @LockMode=N'Exclusive'",
+                                new SqlCommandBatchParameter("@resource", DbType.String, 255)
+                                {
+                                    Value = lockedResource
+                                });
+                        }
+
+                        AppendBatch(_jobCommands, commandBatch);
+                        AppendBatch(_counterCommands, commandBatch);
+                        AppendBatch(_hashCommands, commandBatch);
+                        AppendBatch(_listCommands, commandBatch);
+                        AppendBatch(_setCommands, commandBatch);
+                        AppendBatch(_queueCommands, commandBatch);
+
+                        foreach (var command in _lockCommands)
+                        {
+                            commandBatch.Append(command.Item1);
+                        }
+
+                        commandBatch.CommandTimeout = _storage.CommandTimeout;
+                        commandBatch.CommandBatchMaxTimeout = _storage.CommandBatchMaxTimeout;
+
+                        commandBatch.ExecuteNonQuery();
+                        foreach (var acquiredLock in _acquiredLocks)
+                        {
+                            acquiredLock.TryReportReleased();
+                        }
+
+                        foreach (var lockCommand in _lockCommands)
+                        {
+                            var releaseResult = (int?) lockCommand.Item2.Value;
+                            if (releaseResult.HasValue && releaseResult.Value < 0)
+                            {
+                                throw new SqlServerDistributedLockException($"Could not release a lock on the resource '{lockCommand.Item3}': Server returned the '{releaseResult}' error.");
+                            }
+                        }
+                        
+                        foreach (var queueCommand in _queueCommandQueue)
+                        {
+                            queueCommand(connection, transaction);
+                        }
                     }
+                });
 
-                    AppendBatch(_jobCommands, commandBatch);
-                    AppendBatch(_counterCommands, commandBatch);
-                    AppendBatch(_hashCommands, commandBatch);
-                    AppendBatch(_listCommands, commandBatch);
-                    AppendBatch(_setCommands, commandBatch);
-                    AppendBatch(_queueCommands, commandBatch);
-
-                    commandBatch.CommandTimeout = _storage.CommandTimeout;
-                    commandBatch.CommandBatchMaxTimeout = _storage.CommandBatchMaxTimeout;
-
-                    commandBatch.ExecuteNonQuery();
-
-                    foreach (var queueCommand in _queueCommandQueue)
-                    {
-                        queueCommand(connection, transaction);
-                    }
+                _committed = true;
+            }
+            finally
+            {
+                foreach (var acquiredLock in _acquiredLocks)
+                {
+                    acquiredLock.Dispose();
                 }
-            });
+            }
 
             foreach (var command in _afterCommitCommandQueue)
             {
                 command();
             }
+        }
+
+        public override void Dispose()
+        {
+            foreach (var acquiredLock in _acquiredLocks)
+            {
+                acquiredLock.Dispose();
+            }
+        }
+
+        public override void AcquireDistributedLock(string resource, TimeSpan timeout)
+        {
+            if (String.IsNullOrWhiteSpace(resource)) throw new ArgumentNullException(nameof(resource));
+
+            var disposableLock = _connection.AcquireLock($"{_storage.SchemaName}:{resource}", timeout);
+            if (disposableLock.OwnLock)
+            {
+                var command = SqlServerDistributedLock.CreateReleaseCommand(
+                    _connection.DedicatedConnection,
+                    disposableLock.Resource,
+                    out var resultParameter);
+
+                _lockCommands.Add(Tuple.Create(command, resultParameter, disposableLock.Resource));
+            }
+
+            _acquiredLocks.Add(disposableLock);
         }
 
         public override void ExpireJob(string jobId, TimeSpan expireIn)
@@ -476,6 +540,29 @@ update [{_storage.SchemaName}].[List] set ExpireAt = null where [Key] = @key";
 
             AcquireListLock(key);
             AddCommand(_listCommands, key, query, new SqlCommandBatchParameter("@key", DbType.String) { Value = key });
+        }
+
+        public override void RemoveFromQueue(IFetchedJob fetchedJob)
+        {
+            if (fetchedJob == null) throw new ArgumentNullException(nameof(fetchedJob));
+
+            if (fetchedJob is SqlServerTimeoutJob timeoutJob)
+            {
+                AddCommand(
+                    _queueCommands,
+                    timeoutJob.Queue,
+                    $"delete JQ from [{_storage.SchemaName}].JobQueue JQ with (forceseek, rowlock) where Queue = @queue and Id = @id and FetchedAt = @fetchedAt",
+                    new SqlCommandBatchParameter("@queue", DbType.String) { Value = timeoutJob.Queue },
+                    new SqlCommandBatchParameter("@id", DbType.Int64) { Value = timeoutJob.Id },
+                    new SqlCommandBatchParameter("@fetchedAt", DbType.DateTime) { Value = timeoutJob.FetchedAt });
+                
+                timeoutJob.SetTransaction(this);
+            }
+            else
+            {
+                throw new NotSupportedException(
+                    "Only '" + nameof(SqlServerTimeoutJob) + "' type supports transactional acknowledge, '" + fetchedJob.GetType().Name + "' given.");
+            }
         }
 
         private void AppendBatch<TKey>(

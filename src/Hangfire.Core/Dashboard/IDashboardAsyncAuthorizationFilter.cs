@@ -1,5 +1,4 @@
-﻿// This file is part of Hangfire.
-// Copyright © 2016 Sergey Odinokov.
+﻿// This file is part of Hangfire. Copyright © 2021 Hangfire OÜ.
 // 
 // Hangfire is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as 
@@ -14,26 +13,13 @@
 // You should have received a copy of the GNU Lesser General Public 
 // License along with Hangfire. If not, see <http://www.gnu.org/licenses/>.
 
-using System;
+using System.Threading.Tasks;
 using Hangfire.Annotations;
-using Hangfire.Logging;
-using Microsoft.Extensions.Logging;
 
-namespace Hangfire.AspNetCore
+namespace Hangfire.Dashboard
 {
-    public class AspNetCoreLogProvider : ILogProvider
+    public interface IDashboardAsyncAuthorizationFilter
     {
-        private readonly ILoggerFactory _loggerFactory;
-
-        public AspNetCoreLogProvider([NotNull] ILoggerFactory loggerFactory)
-        {
-            if (loggerFactory == null) throw new ArgumentNullException(nameof(loggerFactory));
-            _loggerFactory = loggerFactory;
-        }
-
-        public ILog GetLogger(string name)
-        {
-            return new AspNetCoreLog(_loggerFactory.CreateLogger(name));
-        }
+        Task<bool> AuthorizeAsync([NotNull] DashboardContext context);
     }
 }
